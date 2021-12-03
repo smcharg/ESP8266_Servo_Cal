@@ -1,5 +1,5 @@
 
-#define VERSION "0.0p"
+#define VERSION "0.0q"
 
 #define SERVO
 
@@ -8,6 +8,9 @@ String wifiSSID = "yourSSID";		// ssid
 String wifiPSK = "yourPSK";			// psk
 String nodeID;						// node
 bool autoconnect = true;			// autoconnect
+
+#define nameOf(x)		#x			// return x as a string
+#define nameOfName(x)	nameOf(x)
 
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
@@ -31,6 +34,8 @@ extern "C"
 {
 #include <user_interface.h>
 }
+
+size_t rootStringLength;			// size of last generated root html
 
 const int LED_PIN = LED_BUILTIN;
 byte led;
@@ -83,7 +88,6 @@ String generateSetForm(String name, String action, int min, int max, int val)
         "max='" + String(max) + "' "
         "value='" + String(val) + "' ";
 
-
     s = name + "<br>\n"
         "<form method='GET' action='" + action + "' enctype='multipart/form-data'>\n"
         "<input type='range' id='x" + valuename + "' name='x " + valuename + "' " +
@@ -95,7 +99,7 @@ String generateSetForm(String name, String action, int min, int max, int val)
         "<input type='submit' value='Set'>\n" +
         "</form>\n" +
         "<br>";
-    Serial.println(s);
+
     return(s);
 }
 
@@ -119,7 +123,11 @@ void handleRoot()
     
     IPAddress ipaddr = WiFi.localIP();
 
-    Serial.println("root");
+	if (rootStringLength)
+	{
+		// reserve string size based on prior observation
+		s.reserve(rootStringLength*1.25);
+	}
     
     s = R"(<!DOCTYPE html>
         <html lang='en'>
@@ -185,19 +193,19 @@ void handleRoot()
         </html>)";
         
     httpServer.send(200, "text/html", s);
-    Serial.println("Root string length=" + String(s.length()));
+
+    rootStringLength = s.length();
+    Serial.println("Root string length=" + String(rootStringLength));
 }    
 
 void handleLeft()
 {
-    Serial.println("left");
     current = pulseleft = httpServer.arg("lvalue").toInt();
     handleRoot();
 }
 
 void handleRight()
 {
-    Serial.println("right");
     current = pulseright = httpServer.arg("rvalue").toInt();
     handleRoot();
 }
@@ -213,7 +221,7 @@ void handleFileUpload()
     {
         String filename = upload.filename;
         if (!filename.startsWith("/")) 
-            filename = "/"+filename;
+            filename = "/" + filename;
         Serial.print("handleFileUpload Name: "); 
         Serial.println(filename);
         updateDisplay(3,"File uploading");
@@ -222,9 +230,8 @@ void handleFileUpload()
     } 
     else if (upload.status == UPLOAD_FILE_WRITE)
     {
-    //DBG_OUTPUT_PORT.print("handleFileUpload Data: "); DBG_OUTPUT_PORT.println(upload.currentSize);
-        if(fsUploadFile)
-        fsUploadFile.write(upload.buf, upload.currentSize);
+        if (fsUploadFile)
+        	fsUploadFile.write(upload.buf, upload.currentSize);
     } 
     else if (upload.status == UPLOAD_FILE_END)
     {
@@ -254,8 +261,13 @@ void setup()
     
     nodeID = "esp" + String(system_get_chip_id(),HEX);
     Serial.println("Node: " + nodeID);
+    
+#if defined(PWM)
     Serial.println("SCL: " + String(SCL));
     Serial.println("SDA: " + String(SDA));
+#else
+	Serial.println("Servo Pin " nameOfName(SERVO_PIN));
+#endif
     
     pinMode(LED_PIN, OUTPUT);
     digitalWrite(LED_PIN, HIGH);
