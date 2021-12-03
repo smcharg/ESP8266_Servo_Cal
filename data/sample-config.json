@@ -1,0 +1,7 @@
+{
+	"ssid":		"YourSSID",
+	"psk": 		"YourPSK",
+	"node":		"servocal",
+	"min":		"500",
+	"max":		"2500"
+}
