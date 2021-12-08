@@ -1,5 +1,5 @@
 
-#define VERSION "0.0u"
+#define VERSION "0.1"
 /*
  * ESP8266_SERVOCAL
  * A tool for calibrating the values used for manipulation of a servo
