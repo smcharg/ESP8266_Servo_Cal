@@ -1,17 +1,48 @@
 
-#define VERSION "0.0r"
+#define VERSION "0.0u"
+/*
+ * ESP8266_SERVOCAL
+ * A tool for calibrating the values used for manipulation of a servo
+ * 
+ * (c) Sidney McHarg, 2021.
+ */
 
+/*
+ * Board configuration (for NodeMCU 1.0)
+ * Flash
+ * 		Size 4 MB
+ * 		FS (file system) 1 MB
+ * 		OTA (over the air update) ~1019 KB
+ */
+ 
+/* define either SERVO or PWM based on connectivy choice */
 #define SERVO
+//#define PWM
+
+#if not (defined(SERVO) | defined(PWM))
+#error either "SERVO" or "PWM" must be defined
+#elif (defined(SERVO) & defined(PWM))
+#error either "SERVO" or "PWM" must be defined, but not both
+#endif
+
+#define SERVOMIN  		500 		// This is the 'minimum' pulse length in usecs
+#define SERVOMAX  		2500 		// This is the 'maximum' pulse length count in usecs
+#define SERVO_FREQ 		50 			// Analog servos run at ~50 Hz updates
 
 /* the following can be set from the config.json file */
 String wifiSSID = "yourSSID";		// ssid
 String wifiPSK = "yourPSK";			// psk
-String nodeID;						// node
+String nodeID;						// node - defaults to esp<chipid>
+									// only settable via config
 bool autoconnect = true;			// autoconnect
+uint16_t pulsemin = SERVOMIN;		// min - minimum pulse length
+uint16_t pulsemax = SERVOMAX;		// max - maximum pulse length
 
-#define nameOf(x)		#x			// return x as a string
-#define nameOfName(x)	nameOf(x)
+/* the following can be useful for obtaining the value of define as a string */
+#define nameOf(x)		#x			// returns x as a string
+#define nameOfName(x)	nameOf(x)	// returns the value of x as a string
 
+/* the WiFi and webserver libraries */
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <ESP8266WebServer.h>
@@ -19,27 +50,49 @@ bool autoconnect = true;			// autoconnect
 #include <ipaddress.h>
 #include <ESP8266WiFiGratuitous.h>
 
+/* the configuration file SPIFFS and json libraries */
 #include <fs.h>
 #include <ArduinoJson.h>
 
 #if defined(PWM)
+/* using an i2c interface, PCA9685 */
 #include <Wire.h>
 #include <Adafruit_PWMServoDriver.h>
-#else
+#elif defined(SERVO)
 #include <Servo.h>
+/* using with native servo driver */
 #define SERVO_PIN       	D7		// control pin for servo
 #endif
 
+uint16_t pulseleft;					// left pulse length
+uint16_t pulseright;				// right pulse length
+uint16_t current;					// current pulse length
+uint16_t previous = 0;				// previous pulse length
+
+#if defined(OLED_DISPLAY)
+/* OLED display option */
+void updateDisplay(int line, String s);
+#error OLED_DISPLAY not fully implemented
+#else
+#define updateDisplay(line, s)
+#endif
+
+/* for obtaining access to ESP framework */
 extern "C"
 {
 #include <user_interface.h>
 }
 
+/* for html generation buffer size allocation */
 size_t rootStringLength;			// size of last generated root html
+									// used to size built string
 
+/* blinking indicator */
 const int LED_PIN = LED_BUILTIN;
 byte led;
-// Web Server for OTA
+
+
+/* Web Server and OTA */
 ESP8266WebServer httpServer(80);
 ESP8266HTTPUpdateServer httpUpdater;
 File fsUploadFile;
@@ -47,36 +100,147 @@ File fsUploadFile;
 #if defined(PWM)
 #define PWM_ADDR        	0x40 	// address of PWM
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver(PWM_ADDR);
-#else
-#define SERVO
+#elif defined(SERVO)
 Servo servo;
 #endif
 
-#define SERVOMIN  	500 		// This is the 'minimum' pulse length in usecs
-#define SERVOMAX  	2500 		// This is the 'maximum' pulse length count in usecs
-#define SERVO_FREQ 	50 			// Analog servos run at ~50 Hz updates
 
-uint16_t pulsemin = SERVOMIN;
-uint16_t pulsemax = SERVOMAX;
-uint16_t pulseleft;
-uint16_t pulseright;
-uint16_t current;
-uint16_t previous = 0;
+/* procedure forward declarations */
+/* configuration */
+bool loadConfiguration(String configTitle);
+void connectWiFi();
+void setupMDNS();
+
+/* webserver and HTML */
+String generateSetForm(String name, String action, int min, int max, int value);
+String generateFileForm(String name, String action);
+void handleRoot();
+void handleLeft();
+void handleRight();
+void handleFileUpload();
+void handleRestart();
+
+/* servo management */
+void servoWriteMicroseconds(uint16_t val);
+
+void setup()
+{
+    Serial.begin(115200);
+    Serial.println("\nESP8266 Servo Calibrator " VERSION);
+
+    nodeID = "esp" + String(system_get_chip_id(), HEX);
+    Serial.println("Node: " + nodeID);
+
+#if defined(PWM)
+    Serial.println("SCL: " + String(SCL));
+    Serial.println("SDA: " + String(SDA));
+#elif defined(SERVO)
+    Serial.println("Servo Pin " nameOfName(SERVO_PIN));
+#endif
+
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, HIGH);
+
+#if defined(PWM)
+    Wire.begin(SCL, SDA);
+    Wire.beginTransmission(PWM_ADDR);
+    byte werr = Wire.endTransmission();
+    if (werr == 0)
+        Serial.println("PWM found");
+    else
+        Serial.println("PWM not found");
+
+    pwm.begin();
+    pwm.setOscillatorFrequency(27000000);
+    pwm.setPWMFreq(SERVO_FREQ);
+#endif
+
+    delay(10);
+
+	// prepare to mount the SPIFFS file system
+    SPIFFSConfig cfg;
+    cfg.setAutoFormat(false);
+    SPIFFS.setConfig(cfg);
+    if (SPIFFS.begin())
+    {
+        FSInfo fs_info;
+        SPIFFS.info(fs_info);
+        Serial.println("SPIFFS size = " + String(fs_info.totalBytes));
+        loadConfiguration("/config.json");
+    }
+    else
+    {
+        Serial.println("Unable to mount SPIFFS");
+    }
+
+    // wait until config file read before initialising servo
+#if defined(SERVO)
+    servo.attach(SERVO_PIN, pulsemin, pulsemax);
+#endif
+
+    // exercise the servo: first to the right
+    servoWriteMicroseconds(pulseright = pulsemax);
+    delay(1000);
+    // code in loop will move to the left postition
+    current = pulseleft = pulsemin;
+
+    // connect to WiFi and MDNS
+    connectWiFi();
+    setupMDNS();
+
+    // set up HTTP server
+    httpUpdater.setup(&httpServer);
+    httpServer.begin();
+
+	// HTTP server call backs
+    // general form
+    httpServer.on("/", HTTP_GET, handleRoot);
+    // left
+    httpServer.on("/left", HTTP_GET, handleLeft);
+    // right
+    httpServer.on("/right", HTTP_GET, handleRight);
+    // note that update capability is done through httpUpdater with /update
+    // setup upload capability
+    httpServer.on("/upload", HTTP_POST, []() {
+        httpServer.send(200, "text/plain", "file uploaded");
+    }, handleFileUpload);
+    // setup reset
+    httpServer.on("/restart", HTTP_GET, handleRestart);
+}
+
+void loop()
+{
+	long now = millis();
+    static long next = 0;
+
+    // flash the led every 500 ms
+    if (now >= next)
+    {
+        digitalWrite(LED_PIN, led = !led);
+        next = now + 500;
+    }
+
+    // mDNS
+    MDNS.update();
+
+    // check for web activity
+    httpServer.handleClient();
+
+    // update servo if necessary
+    if (current != previous)
+    	servoWriteMicroseconds(current);
+}
 
 void servoWriteMicroseconds(uint16_t val)
 {
     current = val;
-    if (previous == val)
-        return;
     previous = val;
 #if defined(PWM)
-    pwm.writeMicroseconds(val);
+    pwm.writeMicroseconds(0,val);
 #else
     servo.writeMicroseconds(val);
 #endif
 }
-
-bool loadConfiguration(String configTitle);
 
 String generateSetForm(String name, String action, int min, int max, int val)
 {
@@ -129,32 +293,32 @@ void handleRoot()
         s.reserve(rootStringLength * 1.25);
     }
 
-    s = R"(<!DOCTYPE html>
-        <html lang='en'>
-        <head>
-        <style>
-        body {
-            background-color: lightblue;
-        }
+    s = "<!DOCTYPE html>\n"
+        "<html lang='en'>\n"
+        "<head>\n"
+        "<style>\n"
+        "body {"
+            "background-color: lightblue;"
+        "}\n"
 
-        h1 {
-            text-align: center;
-            font-size: 22px;
-        }
+        "h1 {"
+            "text-align: center;"
+            "font-size: 22px;"
+        "}\n"
 
-        p {
-            font-family: verdana;
-            font-size: 20px;
-        }
+        "p {"
+            "font-family: verdana;"
+            "font-size: 20px;"
+        "}\n"
 
-        form {
-            font-family: verdana;
-            font-size: 20px;
-        }
+        "form {"
+            "font-family: verdana;"
+            "font-size: 20px;"
+        "}\n"
 
-        </style>
-        </head>
-        <body> <h1>)";
+        "</style>\n"
+        "</head>\n"
+        "<body> <h1>";
     s += "ESP8266 Servo Calibrator "
          "Version: "
          VERSION
@@ -179,18 +343,17 @@ void handleRoot()
     s += generateSetForm("Left", "left", pulsemin, pulsemax, pulseleft);
     s += generateSetForm("Right", "right", pulsemin, pulsemax, pulseright);
 
-    s += R"(System Restart<br>
-        <form method='GET' action='restart' enctype='multipart/form-data'>
-            <input type='submit' value='Restart'>
-        </form>
-        <br>)";
+    s += "System Restart<br>"
+        "<form method='GET' action='restart' enctype='multipart/form-data'>"
+            "<input type='submit' value='Restart'>"
+        "</form>"
+        "<br>\n";
 
     s += generateFileForm("Firmware Update", "update");
     s += generateFileForm("File Upload", "upload");
 
-    s += R"(
-        </body>
-        </html>)";
+    s += "</body>\n"
+        "</html>";
 
     httpServer.send(200, "text/html", s);
 
@@ -215,8 +378,7 @@ void handleFileUpload()
     Serial.println("In handleFileUpload");
     if (httpServer.uri() != "/upload")
         return;
-    HTTPUpload&
-    upload = httpServer.upload();
+    HTTPUpload& upload = httpServer.upload();
     if (upload.status == UPLOAD_FILE_START)
     {
         String filename = upload.filename;
@@ -253,108 +415,6 @@ void handleRestart()
     httpServer.send(200, "text/html", s);
     delay(500);
     ESP.restart();
-}
-void setup()
-{
-    Serial.begin(115200);
-    Serial.println("\nESP8266 Servo Calibrator " VERSION);
-
-    nodeID = "esp" + String(system_get_chip_id(), HEX);
-    Serial.println("Node: " + nodeID);
-
-#if defined(PWM)
-    Serial.println("SCL: " + String(SCL));
-    Serial.println("SDA: " + String(SDA));
-#else
-    Serial.println("Servo Pin " nameOfName(SERVO_PIN));
-#endif
-
-    pinMode(LED_PIN, OUTPUT);
-    digitalWrite(LED_PIN, HIGH);
-
-#if defined(PWM)
-    Wire.begin(SCL, SDA);
-    Wire.beginTransmission(PWM_ADDR);
-    byte werr = Wire.endTransmission();
-    if (werr == 0)
-        Serial.println("PWM found");
-    else
-        Serial.println("PWM not found");
-
-    pwm.begin();
-
-    pwm.setOscillatorFrequency(27000000);
-    pwm.setPWMFreq(SERVO_FREQ);
-#endif
-
-    delay(10);
-
-    SPIFFSConfig cfg;
-    cfg.setAutoFormat(false);
-    SPIFFS.setConfig(cfg);
-    if (SPIFFS.begin())
-    {
-        FSInfo fs_info;
-        SPIFFS.info(fs_info);
-        Serial.println("SPIFFS size = " + String(fs_info.totalBytes));
-        loadConfiguration("/config.json");
-    }
-    else
-    {
-        Serial.println("Unable to mount SPIFFS");
-    }
-
-    // wait until config file read before initialising servo
-#if defined(SERVO)
-    servo.attach(SERVO_PIN, pulsemin, pulsemax);
-#endif
-
-    // exercise the servo
-    servoWriteMicroseconds(current = pulseright = pulsemax);
-    delay(1000);
-    current = pulseleft = pulsemin;
-
-    // connect to WiFi and MDS
-    connectWiFi();
-    setupMDNS();
-
-    // set up HTTP server
-    httpUpdater.setup(&httpServer);
-    httpServer.begin();
-
-    // general form
-    httpServer.on("/", HTTP_GET, handleRoot);
-    // left
-    httpServer.on("/left", HTTP_GET, handleLeft);
-    // right
-    httpServer.on("/right", HTTP_GET, handleRight);
-    // note that update capability is done through httpUpdater with /update
-    // setup upload capability
-    httpServer.on("/upload", HTTP_POST, []() {
-        httpServer.send(200, "text/plain", "file uploaded");
-    }, handleFileUpload);
-    // setup reset
-    httpServer.on("/restart", HTTP_GET, handleRestart);
-}
-
-
-void loop()
-{
-    static long next;
-    if (millis() > next)
-    {
-        digitalWrite(LED_PIN, led = !led);
-        next = millis() + 500;
-    }
-
-    // mDNS
-    MDNS.update();
-
-    // check for web activity
-    httpServer.handleClient();
-
-    // update servo if necessary
-    servoWriteMicroseconds(current);
 }
 
 bool loadConfiguration(String configTitle)
@@ -409,10 +469,8 @@ bool loadConfiguration(String configTitle)
     return (false);
 }
 
-
 void connectWiFi()
 {
-
     updateDisplay(1, "Connecting");
 
     if (WiFi.getAutoConnect())
@@ -467,13 +525,13 @@ void setupMDNS()
     Serial.println("mDNS responder started");
 }
 
+#if defined(OLED_DISPLAY)
 void updateDisplay(int line, String s)
 {
-#if defined(LCD_DISPLAY)
     display.setColor(BLACK);
     display.fillRect(0, line * 11, display.getWidth(), 11);
     display.setColor(WHITE);
     display.drawString(0, line * 11, s);
     display.display();
-#endif
 }
+#endif
