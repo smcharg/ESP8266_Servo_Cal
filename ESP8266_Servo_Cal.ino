@@ -1,5 +1,5 @@
 
-#define VERSION "0.0t"
+#define VERSION "0.0u"
 /*
  * ESP8266_SERVOCAL
  * A tool for calibrating the values used for manipulation of a servo
@@ -293,32 +293,32 @@ void handleRoot()
         s.reserve(rootStringLength * 1.25);
     }
 
-    s = R"(<!DOCTYPE html>
-        <html lang='en'>
-        <head>
-        <style>
-        body {
-            background-color: lightblue;
-        }
+    s = "<!DOCTYPE html>\n"
+        "<html lang='en'>\n"
+        "<head>\n"
+        "<style>\n"
+        "body {"
+            "background-color: lightblue;"
+        "}\n"
 
-        h1 {
-            text-align: center;
-            font-size: 22px;
-        }
+        "h1 {"
+            "text-align: center;"
+            "font-size: 22px;"
+        "}\n"
 
-        p {
-            font-family: verdana;
-            font-size: 20px;
-        }
+        "p {"
+            "font-family: verdana;"
+            "font-size: 20px;"
+        "}\n"
 
-        form {
-            font-family: verdana;
-            font-size: 20px;
-        }
+        "form {"
+            "font-family: verdana;"
+            "font-size: 20px;"
+        "}\n"
 
-        </style>
-        </head>
-        <body> <h1>)";
+        "</style>\n"
+        "</head>\n"
+        "<body> <h1>";
     s += "ESP8266 Servo Calibrator "
          "Version: "
          VERSION
@@ -343,18 +343,17 @@ void handleRoot()
     s += generateSetForm("Left", "left", pulsemin, pulsemax, pulseleft);
     s += generateSetForm("Right", "right", pulsemin, pulsemax, pulseright);
 
-    s += R"(System Restart<br>
-        <form method='GET' action='restart' enctype='multipart/form-data'>
-            <input type='submit' value='Restart'>
-        </form>
-        <br>)";
+    s += "System Restart<br>"
+        "<form method='GET' action='restart' enctype='multipart/form-data'>"
+            "<input type='submit' value='Restart'>"
+        "</form>"
+        "<br>\n";
 
     s += generateFileForm("Firmware Update", "update");
     s += generateFileForm("File Upload", "upload");
 
-    s += R"(
-        </body>
-        </html>)";
+    s += "</body>\n"
+        "</html>";
 
     httpServer.send(200, "text/html", s);
 
