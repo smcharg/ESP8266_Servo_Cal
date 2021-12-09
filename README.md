@@ -26,7 +26,7 @@ Flash Size: 4MB (FS: 1MB,OTA: ~1019kb)
 The requirements for the SPIFFS file system are modest, so the 1 MB allocation is sufficient.
 
 ### Servo Attachment
-The utility will need to be generated for each type of servo connect: direct, or via a I2C PCA96855 controller.  The default is for a directly connected servo.  The PCA9685 mode must be explcity specified by changing the following lines in the source:
+The utility will need to be generated for each type of servo connection: direct, or via a I2C PCA96855 controller.  The default is for a directly connected servo.  The PCA9685 mode must be explcity specified by changing the following lines in the source:
 ```
 /* define either SERVO or PWM based on connectivy choice */
 #define SERVO
@@ -93,7 +93,7 @@ By default the utility will move the servo to the left-most position upon starti
 
 > use the numeric entry field to change the value
 
-As the value is changed both the position of the scroll bar and numeric value are updated.  To case the servo to be positioned to the selected value click the "Set" button.
+As the value is changed both the position of the scroll bar and numeric value are updated.  To cause the servo to be positioned to the selected value click the "Set" button.
 Values are constrained by the minimum and maximum values established for the servo.  By default these are 500 and 2500 usecs, however, can be changed in the configuration file.
 
 To move from one side to the other, simply click the appropriate "Set" button.

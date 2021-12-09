@@ -1,3 +1,5 @@
 
 .DS_Store
 data/config.json
+.vscode/c_cpp_properties.json
+vs.code-workspace
