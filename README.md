@@ -68,7 +68,7 @@ Alternatively a configuration file can be generated and placed in the flash-resi
 Once customized the file should be uploaded to the SPIFFS as "config.json".  Two alternatives exist for uploading the file:
 
 - Via the ESP8266 Sketch Data Upload plugin.
-- The "Upload File" capability provided by this utility, obviously useful only operational.
+- The "Upload File" capability provided by this utility, obviously useful only when operational.
 
 The utility must be restarted in order for the updated configuration to be used.
 

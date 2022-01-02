@@ -1,5 +1,5 @@
 
-#define VERSION "0.1"
+#define VERSION "0.11"
 /*
  * ESP8266_SERVOCAL
  * A tool for calibrating the values used for manipulation of a servo
@@ -142,7 +142,7 @@ void setup()
     digitalWrite(LED_PIN, HIGH);
 
 #if defined(PWM)
-    Wire.begin(SCL, SDA);
+    Wire.begin(SDA, SCL);
     Wire.beginTransmission(PWM_ADDR);
     byte werr = Wire.endTransmission();
     if (werr == 0)
@@ -473,7 +473,7 @@ void connectWiFi()
 {
     updateDisplay(1, "Connecting");
 
-    if (WiFi.getAutoConnect())
+    if (WiFi.getAutoConnect() && (WiFi.SSID() != ""))
     {
         WiFi.begin();
         Serial.println("Reconnecting to: " + WiFi.SSID());
